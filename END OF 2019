@@ -1,0 +1,737 @@
+//MAIN***MAIN***MAIN***MAIN***MAIN***MAIN***MAIN***MAIN***MAIN***MAIN***
+#include <kipr/botball.h>
+#include <Library.h>
+#include <ARM_positions.h>
+#include <Detection.h>
+#include <Location.h>
+
+
+int main()
+{
+
+    //SIMPLE ***********
+    create_connect();
+    retract(3);
+    right(25000,100,0);
+    ground();
+    cls();
+    //cube 2
+    retract(0);
+    left(25000,100,0);
+    servo(1090, 1, 1);
+    servo(1200, 1, 0);
+    servo(640, 2, 1);
+    retract(2);
+    ground();
+    cls();
+    //cube 3
+    retract(0);
+    left(25000,100,0);
+    servo(1090, 1, 1);
+    servo(1200, 1, 0);
+    servo(640, 2, 1);
+    /*
+    
+    // COLOR SIMPLE *********
+    
+    create_connect();
+    calibrate_gyros(); 
+
+    retract(3);
+    scan();  
+    camera_close();
+    loc = 2;
+    
+    go_to(grn);
+    grab();
+    go_to(yllw);
+    left(1000,100,0);
+    ground();
+    retract(2);
+    retract(3);
+    printf("hello\n");
+    right(1000,100,0);
+    go_to(rd);
+    grab();
+    go_to(yllw);
+    right(1000,100,0);
+    ground();
+    retract(2);
+    retract(3);
+    left(1000,100,0);
+    
+*/
+    
+    
+    create_disconnect();
+    
+    
+    return 0;
+}
+
+//LIBRARY***LIBRARY***LIBRARY***LIBRARY***LIBRARY***LIBRARY***LIBRARY***LIBRARY***LIBRARY***LIBRARY***LIBRARY***LIBRARY***LIBRARY***
+#define RIGHT 3
+#define LEFT 0
+
+#define yellow 0
+#define red 1
+#define blue 2
+
+int bias;
+int squarerspeed;
+int squarelspeed;
+//slow servo
+int servoPos;
+//drive until change
+int start_state;
+int laps;
+//camera code
+int blobArea;
+int blobAvg;
+int blobCount = 0;
+int blobRaw = 0;
+
+//FUNCTION CALLS *********************************************
+void calibrate_gyros();
+void gyro_turn_right_PID();
+void create_drive_PID();
+
+int white_value;
+int black_value;
+int middle_value;
+float slope;
+int anval;
+float a_speed;
+float b_speed;
+int line_follow_error;
+int line_follow_error_sum;
+int line_follow_p;
+float line_follow_i;
+float line_follow_kp;
+float line_follow_ki;
+//************************************************************
+
+int loc = 1;
+
+void lock(int sleep){
+   
+    create_drive_direct(0,0);
+    msleep(sleep/2);
+    motor(0,0);
+    motor(3,0);
+    motor(2,0);
+    motor(1,0);
+    msleep(sleep/2);
+    
+    
+    
+}
+
+void servo(int pos, int speedStall, int port){
+    
+
+    enable_servos();
+    
+    servoPos = get_servo_position(port);
+    while(servoPos != pos){
+        
+        if(servoPos < pos){
+            servoPos = servoPos + 1;
+        }else{
+            servoPos = servoPos - 1;
+        }
+        
+        set_servo_position(port,servoPos);
+        msleep(speedStall);
+        
+    } 
+    disable_servos();
+}
+
+void drive_until_change_digital(int digital_port, int motor_port, int motor_speed)
+{
+    
+    start_state = digital(digital_port);
+    laps = 0;
+    while(start_state == digital(digital_port))
+    {
+        
+        mav(motor_port,motor_speed + (laps/6) + 50);
+        laps ++;
+        
+    }
+    lock(2);
+}
+
+int wait_for_button_input(){
+    
+    int button_pressed = 0;
+    int button_right = 0;
+    int button_left = 0;
+    while(button_pressed == 0){
+        if(right_button() == 1){
+          
+            button_pressed = 1;
+            button_right = 1;
+            
+        }
+        if(left_button() == 1){
+            button_pressed = 1;
+            button_left = 1;
+        }
+    }
+    msleep(750);
+    if(button_right == 1){
+        return 0;
+    }else if(button_left == 1){
+        return 1;
+    }else{
+        return 3;
+    }
+}
+
+void callibrate_blacknwhite(int port){
+    
+    printf("Please place the robots light sensor on a black line and\n press one of the buttons on the wallaby.\n");
+    wait_for_button_input();
+    black_value = analog(port);
+    printf("your value was: %d \n if you would like to change the value then please stop the program and restart.\n",black_value);
+    printf("Otherwise please press either of the buttons again while\n the robot's light sensor is on a white suface of the table.\n");
+    wait_for_button_input();
+    white_value = analog(port);
+    console_clear();
+    printf("your white value was: %d \n if you would like to change the value then please stop the program and restart.\n",white_value);
+    msleep(5000);
+    console_clear();
+    middle_value = ((white_value + black_value)/2);
+    printf("your middle value was: %d \n you are now ready to go! \n",middle_value); 
+    msleep(1000);
+    printf("press the button again to continue.\n");
+    wait_for_button_input();
+    console_clear();
+        
+}
+
+void create_line_follow(int port, int target_speed, int dist){
+    
+    set_create_distance(0);
+    slope = 0.6;
+    line_follow_kp = 0.017;
+    line_follow_ki = 0.0;
+    
+    while(get_create_distance() > -dist){
+        
+        line_follow_error = analog(port) - middle_value;
+        line_follow_error_sum += line_follow_error;
+        line_follow_p = line_follow_error * line_follow_kp;
+        line_follow_i = line_follow_error_sum * line_follow_ki;
+        
+        a_speed = -(line_follow_p + line_follow_ki) + target_speed;
+        b_speed = (line_follow_p + line_follow_ki) + target_speed;
+        
+        create_drive_direct(-a_speed,-b_speed);
+                      
+    }
+}
+    
+void calibrate_gyros(){
+    
+    int i = 0;
+    int sum = 0;
+    
+    while(i < 300){
+        
+        sum += gyro_x();
+        msleep(10);
+        i++;
+    }
+    bias = sum / 300;
+    printf("bias: %d\n",bias);
+    
+}
+
+void drive(int dist,int speed){
+ 
+    set_create_distance(0);
+    calibrate_gyros();
+
+    
+    //proportional
+    float tp = 2;
+    float turn_error = 0;
+    float turn_proportional = 0;
+    	
+    //integral
+    float ti = 0.0004;
+    float turn_sum_error = 0;
+    float turn_integral = 0;
+        
+    //derivative
+    float td = 1;
+    float turn_last_error = 0;
+    float turn_derivative = 0;
+    
+    float first_time = seconds();
+    float time = 0;
+    float start_time = 0;
+    float loop_time = 0.012;
+    float turn_speed = 0;
+    float speed_l = 0;
+    float speed_r = 0;
+    
+    while(abs(get_create_distance()) < dist){
+        
+        start_time = time;
+        
+        //turn error calculation
+        turn_error = turn_error + ((gyro_x() - bias) * loop_time);
+        turn_sum_error = turn_sum_error + turn_error;
+        
+        
+        
+        //turn proportional
+        turn_proportional = turn_error * tp;
+        
+        //turn integral
+        turn_integral = turn_sum_error * ti;
+        
+        //turn derivative 
+        turn_derivative = (turn_last_error - turn_error) * td;
+        
+        //last error calculation for the turn PID
+        turn_last_error = turn_error;
+        
+        //final turn PID calculation 
+        turn_speed = turn_proportional + turn_integral + turn_derivative;
+        
+        //final wheel speeds
+        speed_l = -turn_speed + speed;
+        speed_r = turn_speed + speed;
+        
+        //moving the wheels
+        create_drive_direct(speed_l,speed_r);
+      
+        time = seconds() - first_time;
+        loop_time = time - start_time;
+        
+        
+        msleep(20);
+    }
+    lock(10);
+    
+}
+
+void left(int degrees, int speed, int forward_speed){
+
+    float theta = 0;
+    //float time = 0;
+    //float start_time;
+    //float loop_time = 0.012;
+    while(-theta < degrees){
+
+        //start_time = time;
+
+        theta = theta + ((gyro_x() - bias));// * loop_time); 
+		printf("%f\n",theta);
+        msleep(20);
+        create_spin_CCW(speed);
+        //time = seconds() - first_time;
+        //loop_time = time - start_time;
+    }
+    printf("i have exited\n");
+    msleep(15);
+    lock(100);  
+    loc = loc - 1;
+
+}
+
+void right(int degrees, int speed, int forward_speed){
+
+    float theta = 0;
+    //float first_time = seconds();
+    //float time = 0;
+    //float start_time;
+    //float loop_time = 0.012;
+    while(theta < degrees){
+
+        printf("%f\n",theta);
+        //start_time = time;
+
+        theta = theta + ((gyro_x() - bias));// * loop_time); 
+
+        create_spin_CW(speed);
+        msleep(20);
+        
+        //time = seconds() - first_time;
+        //loop_time = time - start_time;
+    }
+    printf("i have exited\n");
+    msleep(15);
+    lock(100);
+    loc = loc + 1;
+}
+
+void create_square_up(int speed){
+    
+    
+    int speeda;
+    int speedb;
+    int theta = 0;
+    calibrate_gyros();
+    
+    while(get_create_lfcliff_amt() > 1600 || get_create_rfcliff_amt() > 1600){
+        
+        
+        theta = theta + (gyro_z() - bias);
+        
+        speeda = theta * 0.05;
+        speedb = theta * -0.05;
+        
+        if(get_create_lfcliff_amt() > 1600){
+            
+            printf("l%d\n",get_create_lfcliff_amt());
+            squarelspeed = speeda + speed;
+            
+        }else{
+         
+            squarelspeed = 0;
+            
+        }
+        if(get_create_rfcliff_amt() > 1600){
+         
+            printf("r%d\n",get_create_rfcliff_amt());
+            squarerspeed = speedb + speed;
+            
+        }else{
+            
+            squarerspeed = 0;
+            
+        }
+        create_drive_direct(squarelspeed,squarerspeed);
+        
+        msleep(15);
+    }
+    
+}
+
+void create_square_up_back(int speed){
+    
+    
+    int speeda;
+    int speedb;
+    int theta = 0;
+    calibrate_gyros();
+    
+    while(get_create_lfcliff_amt() > 1600 || get_create_rfcliff_amt() > 1600){
+        
+        
+        theta = theta + (gyro_z() - bias);
+        
+        speeda = theta * -0.05;
+        speedb = theta * 0.05;
+        
+        if(get_create_lfcliff_amt() > 1600){
+            
+            printf("l%d\n",get_create_lfcliff_amt());
+            squarelspeed = speeda + speed;
+            
+        }else{
+         
+            squarelspeed = 0;
+            
+        }
+        if(get_create_rfcliff_amt() > 1600){
+         
+            printf("r%d\n",get_create_rfcliff_amt());
+            squarerspeed = speedb + speed;
+            
+        }else{
+            
+            squarerspeed = 0;
+            
+        }
+        create_drive_direct(-squarelspeed,-squarerspeed);
+        
+        msleep(15);
+    }
+    
+}
+
+float get_analog_average(int port, int laps)
+{
+    int analogValMass;
+	int analogCounter;
+	float analogValAvg;
+    
+    analogValMass = 0;
+    analogCounter = 0;
+    while(analogCounter < laps)
+    {
+        
+     	analogValMass = analogValMass + analog(port);
+        analogCounter ++;
+        
+    }
+    analogValAvg = analogValMass / laps;
+    printf("%f \n",analogValAvg);
+    return analogValAvg;
+    
+    
+}
+void go_to(int location){
+    
+    while(loc != location){
+     
+        if(loc < location){
+         
+            right(25000,100,0);
+            msleep(30);
+            
+        }else{
+         
+            left(25000,100,0);
+            msleep(30);
+        }
+        
+    }
+    
+    
+}
+//DETECTION***DETECTION***DETECTION***DETECTION***DETECTION***DETECTION***DETECTION***DETECTION***DETECTION***DETECTION***
+int lft;
+int frwrd;
+int rght;
+int rd;
+int yllw;
+int grn;
+int centerx = 90;
+int centery = 40;
+
+void open_camera(){
+ 
+    camera_open();
+    camera_update();camera_update();camera_update();camera_update();camera_update(); camera_update();camera_update();camera_update();camera_update();camera_update();
+    lock(7000);
+    printf("open\n");
+    
+}
+
+float get_object_avg(int channel, int loops){
+ 
+    int i;
+    float avg = 0;
+    
+    for(i = 0; i < loops; i ++){
+     
+        camera_update();
+        avg = avg + get_object_confidence(channel, 0);
+        msleep(10);
+        
+    }
+    return avg / loops;
+    
+}
+int check(int numchan){
+ 
+    camera_open();
+    int i;
+    float highest_confidence = 0;
+    int chan;
+    float val = 0;
+    for(i = 0; i < numchan; i++){
+     
+        val = get_object_avg(i,10);
+        printf("val = %f\n",val);
+        if(val > highest_confidence){
+            
+            printf("new highest value found\n");
+            highest_confidence = val;
+            chan = i;
+            
+        }
+        
+        
+    }
+    if(highest_confidence < 0.1){
+        
+        printf("I dont see anything!");
+        return 100;
+        
+    }else{
+     
+        return chan;
+        
+    }  
+    camera_close();
+    
+}
+void scan(){
+ 
+    left(25000, 100, 0);
+    lft = check(3);
+    right(25000, 100, 0);
+    frwrd = check(3);
+    right(25000, 100, 0);
+    rght = check(3);
+    printf("left = %d \n orward = %d \nright = %d\n\n",lft, frwrd, rght);
+    if(lft == 0){
+        
+        grn = 0;
+        
+    }
+    if(frwrd == 0){
+        
+        grn = 1;
+        
+    }
+    if(rght == 0){
+     
+        grn = 2;
+        
+    }
+    if(lft == 1){
+        
+        yllw = 0;
+        
+    }
+    if(frwrd == 1){
+        
+        yllw = 1;
+        
+    }
+    if(rght == 1){
+     
+        yllw = 2;
+        
+    }
+    if(lft == 2){
+        
+        rd = 0;
+        
+    }
+    if(frwrd == 2){
+        
+        rd = 1;
+        
+    }
+    if(rght == 2){
+     
+        rd = 2;
+        
+    }
+    printf("green = %d\n", grn);
+    printf("yellow = %d\n", yllw);
+    printf("red = %d\n", rd);
+    
+    
+}
+
+void align_on_color_x(int channel, int var){
+    
+    open_camera();
+    int x;
+    while(get_object_center_x(channel, 0) < centerx - var || get_object_center_x(channel, 0) > centerx + var){
+     
+        
+        camera_update();
+        x = get_object_center_x(channel, 0);
+        printf("%d\n",x);
+        if(x < centerx){
+         
+            create_drive_direct(-20,20);
+            
+        }else{
+         
+            create_drive_direct(20,-20);
+            
+        }
+        
+    }
+    lock(10);
+    camera_close();
+    
+}
+void align_on_color_y(int channel, int var){
+    
+    open_camera();
+    int y;
+    while(get_object_center_y(channel, 0) < centery - var || get_object_center_y(channel, 0) > centery + var){
+     
+        
+        camera_update();
+        y = get_object_center_y(channel, 0);
+        printf("%d\n",y);
+        if(y < centery){
+         
+            create_drive_direct(20,20);
+            
+        }else{
+         
+            create_drive_direct(-20,-20);
+            
+        }
+        
+    }
+    lock(10);
+    camera_close();
+    
+}
+void align_on_color(int channel, int var){
+    
+    align_on_color_x(channel,var);
+    align_on_color_y(channel,var);
+    
+}
+//ARM POSITIONS***ARM POSITIONS***ARM POSITIONS***ARM POSITIONS***ARM POSITIONS***ARM POSITIONS***ARM POSITIONS***ARM POSITIONS***ARM POSITIONS***
+void retract(int serv){
+ 
+    switch(serv){
+            
+        case 0:
+            printf("case 0\n");
+            servo(0,1,0);
+            break;
+            
+        case 1:
+            printf("case 1\n");
+            servo(560, 1, 1);
+            break;
+            
+        case 2:
+            printf("case 2\n");
+            servo(2047, 1, 2);
+            break;
+            
+        case 3:
+            printf("case 3\n");
+            servo(0,1,0);
+    		servo(560, 1, 1);
+    		servo(2047, 1, 2);
+            break;
+            
+    }
+    
+}
+void cls(){
+    
+    servo(0,0,2);
+    
+}
+
+void ground(){
+
+    servo(560, 1, 1);
+    servo(1612, 1, 0);
+    
+}
+
+void grab(){
+    
+    servo(1090, 1, 1);
+    servo(1200, 1, 0);
+    servo(640, 2, 1);
+    retract(2);
+    ground();
+    cls();
+    retract(0);
+}
